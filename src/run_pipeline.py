@@ -4,7 +4,7 @@ from pyspark.sql import SparkSession
 from pipeline import MarketingModelETLPipeline
 
 
-def run_pipeline(user_data_input_path, visitor_logs_data_input_path, start_date, end_date, pipeline_output_path):
+def run_pipeline(user_data_input_path, visitor_logs_data_input_path, start_date, end_date, pipeline_output_dir):
     # Create spark session
     spark_session = (
         SparkSession.builder
@@ -19,7 +19,7 @@ def run_pipeline(user_data_input_path, visitor_logs_data_input_path, start_date,
 
     # Get the pipeline's output by calling the run method
     pipeline = MarketingModelETLPipeline(
-        spark_session, user_df, visitor_logs_df, start_date, end_date, pipeline_output_path
+        spark_session, user_df, visitor_logs_df, start_date, end_date, pipeline_output_dir
     )
     output_df = pipeline.run()
 
@@ -43,9 +43,9 @@ if __name__ == '__main__':
         help='Visitor Logs Data csv path'
     )
 
-    default_pipeline_output_path = os.path.join(os.path.realpath(__file__), '../../data/pipeline_output.csv')
+    default_pipeline_output_dir = os.path.join(os.path.realpath(__file__), '../../data/')
     parser.add_argument(
-        '--pipeline_output_path', type=str, default=default_pipeline_output_path, help='Pipeline output csv path'
+        '--pipeline_output_dir', type=str, default=default_pipeline_output_dir, help='Pipeline output csv path'
     )
 
     parser.add_argument('--start_date', type=str, default='2018-05-07', help='Start date for Visitor Logs Data')
@@ -55,5 +55,5 @@ if __name__ == '__main__':
     # Run the pipeline by passing the input paths and date range
     run_pipeline(
         args.user_data_input_path, args.visitor_logs_data_input_path, args.start_date, args.end_date,
-        args.pipeline_output_path
+        args.pipeline_output_dir
     )

@@ -133,3 +133,7 @@ dmypy.json
 
 # Data files
 *.csv
+*.parquet
+*.parquet.crc
+*._SUCCESS.crc
+*_SUCCESS*
