@@ -63,10 +63,16 @@ class MarketingModelETLPipeline:
         return filtered_visitor_logs
 
     def _preprocess(self):
-        self._preprocess_visitor_logs()
-        self._fill_null_visit_datetime()
-        filtered_visitor_logs = self._filter_visitor_logs()
-        filtered_visitor_logs.write.parquet(os.path.join(self.output_dir, 'filtered_visitor_logs'))
+        filtered_visitor_logs_path = os.path.join(self.output_dir, 'filtered_visitor_logs')
+        if os.path.exists(filtered_visitor_logs_path):
+            print(f'Reading from filtered_visitor_logs stored in {self.output_dir}')
+            filtered_visitor_logs = self.spark_session.read.parquet(filtered_visitor_logs_path)
+        else:
+            print('Preprocessing visitor logs')
+            self._preprocess_visitor_logs()
+            self._fill_null_visit_datetime()
+            filtered_visitor_logs = self._filter_visitor_logs()
+            filtered_visitor_logs.write.parquet(filtered_visitor_logs_path)
 
     def run(self):
         self._preprocess()

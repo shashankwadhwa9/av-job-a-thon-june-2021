@@ -31,25 +31,27 @@ if __name__ == '__main__':
     # Read input paths and dates from input args
     parser = argparse.ArgumentParser(description='Date inputs for Marketing Model ETL Pipeline')
 
-    default_user_data_input_path = os.path.join(os.path.realpath(__file__), '../../data/userTable.csv')
+    default_user_data_input_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../data/userTable.csv')
     parser.add_argument(
         '--user_data_input_path', required=False, type=str, default=default_user_data_input_path,
         help='User Data csv path'
     )
 
-    default_visitor_logs_data_input_path = os.path.join(os.path.realpath(__file__), '../../data/VisitorLogsData.csv')
+    default_visitor_logs_data_input_path = os.path.join(
+        os.path.dirname(os.path.realpath(__file__)), '../data/VisitorLogsData.csv'
+    )
     parser.add_argument(
         '--visitor_logs_data_input_path', type=str, default=default_visitor_logs_data_input_path,
         help='Visitor Logs Data csv path'
     )
 
-    default_pipeline_output_dir = os.path.join(os.path.realpath(__file__), '../../data/')
+    default_pipeline_output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../data/')
     parser.add_argument(
         '--pipeline_output_dir', type=str, default=default_pipeline_output_dir, help='Pipeline output csv path'
     )
 
     parser.add_argument('--start_date', type=str, default='2018-05-07', help='Start date for Visitor Logs Data')
-    parser.add_argument('--end_date', type=str, default='2018-05-27', help='End date for Visitor Logs Data')
+    parser.add_argument('--end_date', type=str, default='2018-05-28', help='End date for Visitor Logs Data')
     args = parser.parse_args()
 
     # Run the pipeline by passing the input paths and date range
