@@ -27,28 +27,23 @@ class MarketingModelETLPipeline:
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'VisitDateTime_normalized', F.col('VisitDateTime_normalized').cast(TimestampType())
         )
-        # self.visitor_logs_df = self.visitor_logs_df.sort('VisitDateTime_normalized')
+        self.visitor_logs_df = self.visitor_logs_df.sort('VisitDateTime_normalized')
 
     def _fill_null_visit_datetime(self):
-        null_df = self.visitor_logs_df.where(F.col('VisitDateTime_normalized').isNull())
-
-        non_null_df = self.visitor_logs_df.where(F.col('VisitDateTime_normalized').isNotNull())
-        non_null_df = non_null_df.sort('VisitDateTime_normalized')
-        w = Window.partitionBy(non_null_df.webClientID, non_null_df.ProductID)
-        non_null_df = non_null_df.withColumn(
-            "first_webClientID_ProductID", F.first(non_null_df.VisitDateTime_normalized).over(w)
+        w = Window.partitionBy(self.visitor_logs_df.webClientID, self.visitor_logs_df.ProductID)
+        res = self.visitor_logs_df.withColumn(
+            "first_webClientID_ProductID", F.first(
+                self.visitor_logs_df.VisitDateTime_normalized, ignorenulls=True
+            ).over(w)
         )
-        x = null_df.join(non_null_df, ["webClientID", "ProductID"])
+        x = res.withColumn("VisitDateTime_normalized_na_filled", when(col("VisitDateTime_normalized").isNull(), col("first_webClientID_ProductID")).otherwise(col("VisitDateTime_normalized")))
         x.show()
         print(x.count())
+        null_x = self.visitor_logs_df.where(F.col('VisitDateTime_normalized_na_filled').isNull())
+        null_x.show()
+        print(null_x.count())
 
     def _filter_visitor_logs(self):
-        # print(self.visitor_logs_df.count())
-        # self.visitor_logs_df.where(F.col('VisitDateTime_normalized').isNull()).show(truncate=False)
-        # c = self.visitor_logs_df.where(F.col('VisitDateTime_normalized').isNull()).count()
-        # print(c)
-        # self.visitor_logs_df.where(F.col('webClientID') == 'WI100000280033').show(100, False)
-        # print(self.visitor_logs_df.where(F.col('webClientID') == 'WI100000280033').count())
         pass
 
     def _preprocess(self):
