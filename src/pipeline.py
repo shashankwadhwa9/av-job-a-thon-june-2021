@@ -80,11 +80,18 @@ class MarketingModelETLPipeline:
     def run(self):
         self._preprocess()
 
-        df = self.user_df.join(self.filtered_visitor_logs, ['UserID'], how='left')
+        merged_df = self.user_df.join(self.filtered_visitor_logs, ['UserID'], how='left')
 
         # Compute No_of_days_Visited_7_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
-        df = df.filter(df.VisitDateTime_normalized_na_filled >= cutoff_date)
-        user_df = df.withColumn(
+        df = merged_df.filter(merged_df.VisitDateTime_normalized_na_filled >= cutoff_date)
+        df_days_visited_7_Days = df.withColumn(
             'VisitDateTime_date', F.to_date(F.col('VisitDateTime_normalized_na_filled'))
         ).groupby('UserID').agg(F.countDistinct('VisitDateTime_date').alias('No_of_days_Visited_7_Days'))
+
+        # Compute No_Of_Products_Viewed_15_Days
+        cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
+        df = merged_df.filter(merged_df.VisitDateTime_normalized_na_filled >= cutoff_date)
+        df_products_visited_15_Days = df.groupby('UserID').agg(
+            F.countDistinct('ProductID').alias('No_Of_Products_Viewed_15_Days')
+        )
