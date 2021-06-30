@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pyspark.sql import Window, functions as F
 from pyspark.sql.types import TimestampType
 from utils import visit_datetime_normalize_udf
@@ -17,6 +17,9 @@ class MarketingModelETLPipeline:
         # Make utils available on all the worker nodes
         utils_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'utils.py')
         self.spark_session.sparkContext.addPyFile(utils_path)
+
+        # Initialize variables to None
+        self.filtered_visitor_logs = None
 
     def load(self, df):
         df.write.csv(os.path.join(self.output_dir), 'pipeline_output.csv')
@@ -66,15 +69,22 @@ class MarketingModelETLPipeline:
         filtered_visitor_logs_path = os.path.join(self.output_dir, 'filtered_visitor_logs')
         if os.path.exists(filtered_visitor_logs_path):
             print(f'Reading from filtered_visitor_logs stored in {self.output_dir}')
-            filtered_visitor_logs = self.spark_session.read.parquet(filtered_visitor_logs_path)
+            self.filtered_visitor_logs = self.spark_session.read.parquet(filtered_visitor_logs_path)
         else:
             print('Preprocessing visitor logs')
             self._preprocess_visitor_logs()
             self._fill_null_visit_datetime()
-            filtered_visitor_logs = self._filter_visitor_logs()
+            self.filtered_visitor_logs = self._filter_visitor_logs()
             filtered_visitor_logs.write.parquet(filtered_visitor_logs_path)
 
     def run(self):
         self._preprocess()
-        # self.user_df.show(truncate=False)
-        # self.visitor_logs_df.show(truncate=False)
+
+        df = self.user_df.join(self.filtered_visitor_logs, ['UserID'], how='left')
+
+        # Compute No_of_days_Visited_7_Days
+        cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
+        df = df.filter(df.VisitDateTime_normalized_na_filled >= cutoff_date)
+        user_df = df.withColumn(
+            'VisitDateTime_date', F.to_date(F.col('VisitDateTime_normalized_na_filled'))
+        ).groupby('UserID').agg(F.countDistinct('VisitDateTime_date').alias('No_of_days_Visited_7_Days'))
