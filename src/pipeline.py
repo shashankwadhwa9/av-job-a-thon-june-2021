@@ -17,6 +17,7 @@ class MarketingModelETLPipeline:
         # Make utils available on all the worker nodes
         utils_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'utils.py')
         self.spark_session.sparkContext.addPyFile(utils_path)
+        self.spark_session.conf.set('spark.sql.session.timeZone', 'UTC')
 
         # Initialize variables to None
         self.filtered_visitor_logs = None
@@ -81,6 +82,7 @@ class MarketingModelETLPipeline:
         self._preprocess()
 
         merged_df = self.user_df.join(self.filtered_visitor_logs, ['UserID'], how='left')
+        merged_df = merged_df.withColumn('Signup Date', F.col('Signup Date').cast(TimestampType()))
 
         # Compute No_of_days_Visited_7_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
@@ -95,3 +97,9 @@ class MarketingModelETLPipeline:
         df_products_visited_15_Days = df.groupby('UserID').agg(
             F.countDistinct('ProductID').alias('No_Of_Products_Viewed_15_Days')
         )
+
+        # Compute User_Vintage
+        df = self.user_df.withColumn(
+            'User_Vintage', F.datediff(F.to_date(F.lit('2018-05-28')), F.to_date('Signup Date'))
+        ).select('UserID', 'User_Vintage')
+        df.show()
