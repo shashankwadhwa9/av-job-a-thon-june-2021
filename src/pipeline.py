@@ -99,7 +99,7 @@ class MarketingModelETLPipeline:
         # Compute No_Of_Products_Viewed_15_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
         df = merged_df.filter(merged_df.VisitDateTime_normalized_na_filled >= cutoff_date)
-        df_products_visited_15_Days = df.groupby('UserID').agg(
+        df_total_products_viewed_15_Days = df.groupby('UserID').agg(
             F.countDistinct('ProductID').alias('No_Of_Products_Viewed_15_Days')
         )
 
@@ -122,10 +122,13 @@ class MarketingModelETLPipeline:
         window = Window.partitionBy('UserID').orderBy(
             [df_products_viewed_15_Days.cnt.desc(), df_products_viewed_15_Days.most_recent_visit.desc()]
         )
-        df_products_viewed_15_Days = df_products_viewed_15_Days.withColumn(
-            'row_number', F.row_number().over(window)
+        df_products_viewed_15_Days = df_products_viewed_15_Days.withColumn('row_number', F.row_number().over(window))
+        df_most_viewed_product_15_days = df_products_viewed_15_Days.filter(
+            F.col('row_number') == 1
+        ).select('UserID', 'ProductID')
+        df_most_viewed_product_15_days = df_most_viewed_product_15_days.withColumnRenamed(
+            'ProductID', 'Most_Viewed_product_15_Days'
         )
-        df_most_viewed_product_15_days = df_products_viewed_15_Days.filter(F.col('row_number') == 1)
 
         # Compute Most_Active_OS
         grouped = df.groupBy('UserID', 'OS').count()
@@ -151,3 +154,32 @@ class MarketingModelETLPipeline:
             (merged_df.Activity == 'pageload')
         )
         df_pageloads_last_7_days = df.groupBy('UserID').count()
+
+        # Compute Clicks_last_7_days
+        cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
+        df = merged_df.filter(
+            (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
+            (merged_df.Activity == 'click')
+        )
+        df_clicks_last_7_days = df.groupBy('UserID').count()
+
+        ## Merge all the computations
+        users = self.user_df.select('UserID')
+        users = users.join(df_days_visited_7_Days, 'UserID', how='left')
+
+        users = users.join(df_total_products_viewed_15_Days, 'UserID', how='left')
+
+        users = users.join(df_user_vintage, 'UserID', how='left')
+
+        users = users.join(df_most_viewed_product_15_days, 'UserID', how='left')
+
+        # Fill nulls
+        users = users.na.fill({
+            'No_of_days_Visited_7_Days': 0,
+            'No_Of_Products_Viewed_15_Days': 0,
+            'Most_Viewed_product_15_Days': 'Product101'
+        })
+        users = users.sort('UserID')
+
+        print(users.count())
+        users.show()
