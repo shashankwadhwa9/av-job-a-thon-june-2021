@@ -104,16 +104,26 @@ class MarketingModelETLPipeline:
         )
 
         # Compute User_Vintage
-        df = self.user_df.withColumn(
+        df_user_vintage = self.user_df.withColumn(
             'User_Vintage', F.datediff(F.to_date(F.lit('2018-05-28')), F.to_date('Signup Date'))
         ).select('UserID', 'User_Vintage')
 
         # Most_Viewed_product_15_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
-        merged_df.select('Activity').distinct().show(n=100, truncate=False)
-        merged_df.select('Browser').distinct().show(n=100, truncate=False)
-        merged_df.select('OS').distinct().show(n=100, truncate=False)
-    # df = merged_df.filter((merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) & (merged_df.Activity
-        # df_products_visited_15_Days = df.groupby('UserID').agg(
-        #     F.countDistinct('ProductID').alias('No_Of_Products_Viewed_15_Days')
-        # )
+        df = merged_df.filter(
+            (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
+            (merged_df.Activity == 'pageload') &
+            (merged_df.ProductID.isNotNull())
+        )
+        df_products_viewed_15_Days = df.groupby(['UserID', 'ProductID']).agg(
+            F.count('Activity').alias('cnt'),
+            F.max('VisitDateTime_normalized_na_filled').alias('most_recent_visit'),
+        )
+        windowSpec = Window.partitionBy('UserID').orderBy(
+            [df_products_viewed_15_Days.cnt.desc(), df_products_viewed_15_Days.most_recent_visit.desc()]
+        )
+        df_products_viewed_15_Days = df_products_viewed_15_Days.withColumn(
+            'row_number', F.row_number().over(windowSpec)
+        )
+        df_most_viewed_product_15_days = df_products_viewed_15_Days.filter(F.col('row_number') == 1)
+        df_most_viewed_product_15_days.show()
