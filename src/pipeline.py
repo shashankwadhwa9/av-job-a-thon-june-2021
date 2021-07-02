@@ -22,9 +22,6 @@ class MarketingModelETLPipeline:
         # Initialize variables to None
         self.filtered_visitor_logs = None
 
-    def load(self, df):
-        df.write.csv(os.path.join(self.output_dir), 'pipeline_output.csv')
-
     def _preprocess_visitor_logs(self):
         """
         Create VisitDateTime_normalized column, typecast to timestamp type and sort entire df by VisitDateTime_normalized
@@ -131,9 +128,13 @@ class MarketingModelETLPipeline:
         )
 
         # Compute Most_Active_OS
-        grouped = df.groupBy('UserID', 'OS').count()
+        grouped = merged_df.groupBy('UserID', 'OS').count()
         window = Window.partitionBy('UserID').orderBy(F.desc('count'))
-        df_most_active_os = grouped.withColumn('row_number', F.row_number().over(window)).where(F.col('row_number') == 1)
+        df_most_active_os = grouped\
+            .withColumn('row_number', F.row_number().over(window))\
+            .where(F.col('row_number') == 1)\
+            .select('UserID', 'OS')\
+            .withColumnRenamed('OS', 'Most_Active_OS')
 
         # Compute Recently_Viewed_Product
         df = merged_df.filter(
@@ -145,7 +146,10 @@ class MarketingModelETLPipeline:
         )
         window = Window.partitionBy('UserID').orderBy(df_products_viewed.most_recent_visit.desc())
         df_products_viewed = df_products_viewed.withColumn('row_number', F.row_number().over(window))
-        df_recently_viewed_product = df_products_viewed.filter(F.col('row_number') == 1)
+        df_recently_viewed_product = df_products_viewed\
+            .filter(F.col('row_number') == 1)\
+            .select('UserID', 'ProductID') \
+            .withColumnRenamed('ProductID', 'Recently_Viewed_Product')
 
         # Compute Pageloads_last_7_days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
@@ -153,7 +157,7 @@ class MarketingModelETLPipeline:
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
             (merged_df.Activity == 'pageload')
         )
-        df_pageloads_last_7_days = df.groupBy('UserID').count()
+        df_pageloads_last_7_days = df.groupBy('UserID').count().withColumnRenamed('count', 'Pageloads_last_7_days')
 
         # Compute Clicks_last_7_days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
@@ -161,7 +165,7 @@ class MarketingModelETLPipeline:
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
             (merged_df.Activity == 'click')
         )
-        df_clicks_last_7_days = df.groupBy('UserID').count()
+        df_clicks_last_7_days = df.groupBy('UserID').count().withColumnRenamed('count', 'Clicks_last_7_days')
 
         ## Merge all the computations
         users = self.user_df.select('UserID')
@@ -173,13 +177,27 @@ class MarketingModelETLPipeline:
 
         users = users.join(df_most_viewed_product_15_days, 'UserID', how='left')
 
+        users = users.join(df_most_active_os, 'UserID', how='left')
+
+        users = users.join(df_recently_viewed_product, 'UserID', how='left')
+
+        users = users.join(df_pageloads_last_7_days, 'UserID', how='left')
+
+        users = users.join(df_clicks_last_7_days, 'UserID', how='left')
+
         # Fill nulls
         users = users.na.fill({
             'No_of_days_Visited_7_Days': 0,
             'No_Of_Products_Viewed_15_Days': 0,
-            'Most_Viewed_product_15_Days': 'Product101'
+            'Most_Viewed_product_15_Days': 'Product101',
+            'Recently_Viewed_Product': 'Product101',
+            'Pageloads_last_7_days': 0,
+            'Clicks_last_7_days': 0
         })
         users = users.sort('UserID')
 
-        print(users.count())
-        users.show()
+        return users
+
+    def load(self, df):
+        output_path = os.path.join(self.output_dir, 'pipeline_output.csv')
+        df.toPandas().to_csv(output_path, index=False)
