@@ -66,6 +66,10 @@ class MarketingModelETLPipeline:
 
         return filtered_visitor_logs
 
+    def _convert_to_lowercase(self):
+        self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn('Activity', F.lower(F.col('Activity')))
+        self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn('OS', F.lower(F.col('OS')))
+
     def _preprocess(self):
         filtered_visitor_logs_path = os.path.join(self.output_dir, 'filtered_visitor_logs')
         if os.path.exists(filtered_visitor_logs_path):
@@ -76,7 +80,8 @@ class MarketingModelETLPipeline:
             self._preprocess_visitor_logs()
             self._fill_null_visit_datetime()
             self.filtered_visitor_logs = self._filter_visitor_logs()
-            filtered_visitor_logs.write.parquet(filtered_visitor_logs_path)
+            self._convert_to_lowercase()
+            self.filtered_visitor_logs.write.parquet(filtered_visitor_logs_path)
 
     def run(self):
         self._preprocess()
@@ -102,4 +107,13 @@ class MarketingModelETLPipeline:
         df = self.user_df.withColumn(
             'User_Vintage', F.datediff(F.to_date(F.lit('2018-05-28')), F.to_date('Signup Date'))
         ).select('UserID', 'User_Vintage')
-        df.show()
+
+        # Most_Viewed_product_15_Days
+        cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
+        merged_df.select('Activity').distinct().show(n=100, truncate=False)
+        merged_df.select('Browser').distinct().show(n=100, truncate=False)
+        merged_df.select('OS').distinct().show(n=100, truncate=False)
+    # df = merged_df.filter((merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) & (merged_df.Activity
+        # df_products_visited_15_Days = df.groupby('UserID').agg(
+        #     F.countDistinct('ProductID').alias('No_Of_Products_Viewed_15_Days')
+        # )
