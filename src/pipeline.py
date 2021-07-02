@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from pyspark.sql import Window, functions as F
 from pyspark.sql.types import TimestampType
-from utils import visit_datetime_normalize_udf
+from utils import visit_datetime_normalize_udf, mode_udf
 
 
 class MarketingModelETLPipeline:
@@ -108,7 +108,7 @@ class MarketingModelETLPipeline:
             'User_Vintage', F.datediff(F.to_date(F.lit('2018-05-28')), F.to_date('Signup Date'))
         ).select('UserID', 'User_Vintage')
 
-        # Most_Viewed_product_15_Days
+        # Compute Most_Viewed_product_15_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
         df = merged_df.filter(
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
@@ -119,11 +119,16 @@ class MarketingModelETLPipeline:
             F.count('Activity').alias('cnt'),
             F.max('VisitDateTime_normalized_na_filled').alias('most_recent_visit'),
         )
-        windowSpec = Window.partitionBy('UserID').orderBy(
+        window = Window.partitionBy('UserID').orderBy(
             [df_products_viewed_15_Days.cnt.desc(), df_products_viewed_15_Days.most_recent_visit.desc()]
         )
         df_products_viewed_15_Days = df_products_viewed_15_Days.withColumn(
-            'row_number', F.row_number().over(windowSpec)
+            'row_number', F.row_number().over(window)
         )
         df_most_viewed_product_15_days = df_products_viewed_15_Days.filter(F.col('row_number') == 1)
         df_most_viewed_product_15_days.show()
+
+        # Compute Most_Active_OS
+        grouped = df.groupBy('UserID', 'OS').count()
+        window = Window.partitionBy('UserID').orderBy(F.desc('count'))
+        df_most_active_os = grouped.withColumn('row_number', F.row_number().over(window)).where(F.col('row_number') == 1)
