@@ -143,3 +143,11 @@ class MarketingModelETLPipeline:
         window = Window.partitionBy('UserID').orderBy(df_products_viewed.most_recent_visit.desc())
         df_products_viewed = df_products_viewed.withColumn('row_number', F.row_number().over(window))
         df_recently_viewed_product = df_products_viewed.filter(F.col('row_number') == 1)
+
+        # Compute Pageloads_last_7_days
+        cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
+        df = merged_df.filter(
+            (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
+            (merged_df.Activity == 'pageload')
+        )
+        df_pageloads_last_7_days = df.groupBy('UserID').count()
