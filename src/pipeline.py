@@ -94,7 +94,9 @@ class MarketingModelETLPipeline:
         return filtered_visitor_logs
 
     def _convert_to_lowercase(self):
-        self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn('Activity', F.lower(F.col('Activity')))
+        self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn(
+            'Activity_na_filled', F.lower(F.col('Activity_na_filled'))
+        )
         self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn('OS', F.lower(F.col('OS')))
 
     def _preprocess(self):
@@ -141,11 +143,11 @@ class MarketingModelETLPipeline:
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
         df = merged_df.filter(
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
-            (merged_df.Activity == 'pageload') &
+            (merged_df.Activity_na_filled == 'pageload') &
             (merged_df.ProductID.isNotNull())
         )
         df_products_viewed_15_Days = df.groupby(['UserID', 'ProductID']).agg(
-            F.count('Activity').alias('cnt'),
+            F.count('Activity_na_filled').alias('cnt'),
             F.max('VisitDateTime_normalized_na_filled').alias('most_recent_visit'),
         )
         window = Window.partitionBy('UserID').orderBy(
@@ -168,7 +170,7 @@ class MarketingModelETLPipeline:
 
         # Compute Recently_Viewed_Product
         df = merged_df.filter(
-            (merged_df.Activity == 'pageload') &
+            (merged_df.Activity_na_filled == 'pageload') &
             (merged_df.ProductID.isNotNull())
         )
         df_products_viewed = df.groupby(['UserID', 'ProductID']).agg(
@@ -185,7 +187,7 @@ class MarketingModelETLPipeline:
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
         df = merged_df.filter(
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
-            (merged_df.Activity == 'pageload')
+            (merged_df.Activity_na_filled == 'pageload')
         )
         df_pageloads_last_7_days = df.groupBy('UserID').count().withColumnRenamed('count', 'Pageloads_last_7_days')
 
@@ -193,7 +195,7 @@ class MarketingModelETLPipeline:
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
         df = merged_df.filter(
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
-            (merged_df.Activity == 'click')
+            (merged_df.Activity_na_filled == 'click')
         )
         df_clicks_last_7_days = df.groupBy('UserID').count().withColumnRenamed('count', 'Clicks_last_7_days')
 
