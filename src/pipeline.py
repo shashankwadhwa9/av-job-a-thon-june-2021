@@ -38,6 +38,7 @@ class MarketingModelETLPipeline:
         """
         Fill null VisitDateTime_normalized rows by taking the first value of webClientID and ProductID combination
         """
+        # Take first of webClientID and ProductID
         w = Window.partitionBy(self.visitor_logs_df.webClientID, self.visitor_logs_df.ProductID)
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'first_webClientID_ProductID', F.first(
@@ -52,6 +53,35 @@ class MarketingModelETLPipeline:
             ).otherwise(F.col('VisitDateTime_normalized'))
         )
 
+        # Take first of webClientID
+        w = Window.partitionBy(self.visitor_logs_df.webClientID)
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'first_webClientID', F.first(
+                self.visitor_logs_df.VisitDateTime_normalized, ignorenulls=True
+            ).over(w)
+        )
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'VisitDateTime_normalized_na_filled',
+            F.when(
+                F.col('VisitDateTime_normalized_na_filled').isNull(),
+                F.col('first_webClientID')
+            ).otherwise(F.col('VisitDateTime_normalized_na_filled'))
+        )
+
+    def _fill_null_activity(self):
+        window = Window\
+            .partitionBy(self.visitor_logs_df.webClientID)\
+            .orderBy(self.visitor_logs_df.VisitDateTime_normalized_na_filled)
+
+        self.visitor_logs_df = self.visitor_logs_df.withColumn('lag_Activity', F.lag('Activity', 1).over(window))
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'Activity_na_filled',
+            F.when(
+                F.col('Activity').isNull(),
+                F.col('lag_Activity')
+            ).otherwise(F.col('Activity'))
+        )
+
     def _filter_visitor_logs(self):
         """
         Filter the logs according to the daterange passed
@@ -59,7 +89,7 @@ class MarketingModelETLPipeline:
         """
         filtered_visitor_logs = self.visitor_logs_df\
             .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled >= datetime.strptime(self.start_date, '%Y-%m-%d'))\
-            .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled <= datetime.strptime(self.end_date, '%Y-%m-%d'))
+            .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled < datetime.strptime(self.end_date, '%Y-%m-%d'))
 
         return filtered_visitor_logs
 
@@ -76,6 +106,7 @@ class MarketingModelETLPipeline:
             print('Preprocessing visitor logs')
             self._preprocess_visitor_logs()
             self._fill_null_visit_datetime()
+            self._fill_null_activity()
             self.filtered_visitor_logs = self._filter_visitor_logs()
             self._convert_to_lowercase()
             self.filtered_visitor_logs.write.parquet(filtered_visitor_logs_path)
@@ -85,6 +116,7 @@ class MarketingModelETLPipeline:
 
         merged_df = self.user_df.join(self.filtered_visitor_logs, ['UserID'], how='left')
         merged_df = merged_df.withColumn('Signup Date', F.col('Signup Date').cast(TimestampType()))
+        merged_df = merged_df.sort('VisitDateTime_normalized_na_filled')
 
         # Compute No_of_days_Visited_7_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
@@ -120,12 +152,10 @@ class MarketingModelETLPipeline:
             [df_products_viewed_15_Days.cnt.desc(), df_products_viewed_15_Days.most_recent_visit.desc()]
         )
         df_products_viewed_15_Days = df_products_viewed_15_Days.withColumn('row_number', F.row_number().over(window))
-        df_most_viewed_product_15_days = df_products_viewed_15_Days.filter(
-            F.col('row_number') == 1
-        ).select('UserID', 'ProductID')
-        df_most_viewed_product_15_days = df_most_viewed_product_15_days.withColumnRenamed(
-            'ProductID', 'Most_Viewed_product_15_Days'
-        )
+        df_most_viewed_product_15_days = df_products_viewed_15_Days\
+            .filter(F.col('row_number') == 1)\
+            .select('UserID', 'ProductID')\
+            .withColumnRenamed('ProductID', 'Most_Viewed_product_15_Days')
 
         # Compute Most_Active_OS
         grouped = merged_df.groupBy('UserID', 'OS').count()
