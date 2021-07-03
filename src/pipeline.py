@@ -30,15 +30,16 @@ class MarketingModelETLPipeline:
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'VisitDateTime_normalized', F.col('VisitDateTime_normalized').cast(TimestampType())
         )
+        self.visitor_logs_df = self.visitor_logs_df.withColumn('ProductID', F.lower(F.col('ProductID')))
 
     def _fill_null_visit_datetime(self):
         """
         Fill null VisitDateTime_normalized rows by taking the first value of webClientID and ProductID combination
         """
         # Take first of webClientID and ProductID
-        w = Window\
-            .partitionBy(self.visitor_logs_df.webClientID, self.visitor_logs_df.ProductID)\
-            .orderBy(self.visitor_logs_df.VisitDateTime_normalized)
+        w = Window \
+            .partitionBy(self.visitor_logs_df.webClientID, self.visitor_logs_df.ProductID) \
+            .orderBy(F.col('VisitDateTime_normalized').asc_nulls_last())
 
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'first_webClientID_ProductID', F.first(
@@ -52,25 +53,6 @@ class MarketingModelETLPipeline:
                 F.col('first_webClientID_ProductID')
             ).otherwise(F.col('VisitDateTime_normalized'))
         )
-
-        print(self.visitor_logs_df.filter(F.col('VisitDateTime_normalized_na_filled').isNull()).count())
-
-        # Take first of webClientID
-        w = Window.partitionBy(self.visitor_logs_df.webClientID).orderBy(self.visitor_logs_df.VisitDateTime_normalized)
-        self.visitor_logs_df = self.visitor_logs_df.withColumn(
-            'first_webClientID', F.first(
-                self.visitor_logs_df.VisitDateTime_normalized, ignorenulls=True
-            ).over(w)
-        )
-        self.visitor_logs_df = self.visitor_logs_df.withColumn(
-            'VisitDateTime_normalized_na_filled',
-            F.when(
-                F.col('VisitDateTime_normalized_na_filled').isNull(),
-                F.col('first_webClientID')
-            ).otherwise(F.col('VisitDateTime_normalized_na_filled'))
-        )
-
-        print(self.visitor_logs_df.filter(F.col('VisitDateTime_normalized_na_filled').isNull()).count())
 
     def _filter_visitor_logs(self):
         """
