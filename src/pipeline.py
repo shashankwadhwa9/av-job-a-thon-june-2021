@@ -10,6 +10,7 @@ class MarketingModelETLPipeline:
         self.spark_session = spark_session
         self.user_df = user_df
         self.visitor_logs_df = visitor_logs_df
+        self.visitor_logs_df_orig = visitor_logs_df
         self.start_date = start_date
         self.end_date = end_date
         self.output_dir = output_dir
@@ -18,9 +19,6 @@ class MarketingModelETLPipeline:
         utils_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'utils.py')
         self.spark_session.sparkContext.addPyFile(utils_path)
         self.spark_session.conf.set('spark.sql.session.timeZone', 'UTC')
-
-        # Initialize variables to None
-        self.filtered_visitor_logs = None
 
     def _preprocess_visitor_logs(self):
         """
@@ -32,14 +30,16 @@ class MarketingModelETLPipeline:
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'VisitDateTime_normalized', F.col('VisitDateTime_normalized').cast(TimestampType())
         )
-        self.visitor_logs_df = self.visitor_logs_df.sort('VisitDateTime_normalized')
 
     def _fill_null_visit_datetime(self):
         """
         Fill null VisitDateTime_normalized rows by taking the first value of webClientID and ProductID combination
         """
         # Take first of webClientID and ProductID
-        w = Window.partitionBy(self.visitor_logs_df.webClientID, self.visitor_logs_df.ProductID)
+        w = Window\
+            .partitionBy(self.visitor_logs_df.webClientID, self.visitor_logs_df.ProductID)\
+            .orderBy(self.visitor_logs_df.VisitDateTime_normalized)
+
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'first_webClientID_ProductID', F.first(
                 self.visitor_logs_df.VisitDateTime_normalized, ignorenulls=True
@@ -53,8 +53,10 @@ class MarketingModelETLPipeline:
             ).otherwise(F.col('VisitDateTime_normalized'))
         )
 
+        print(self.visitor_logs_df.filter(F.col('VisitDateTime_normalized_na_filled').isNull()).count())
+
         # Take first of webClientID
-        w = Window.partitionBy(self.visitor_logs_df.webClientID)
+        w = Window.partitionBy(self.visitor_logs_df.webClientID).orderBy(self.visitor_logs_df.VisitDateTime_normalized)
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'first_webClientID', F.first(
                 self.visitor_logs_df.VisitDateTime_normalized, ignorenulls=True
@@ -67,6 +69,17 @@ class MarketingModelETLPipeline:
                 F.col('first_webClientID')
             ).otherwise(F.col('VisitDateTime_normalized_na_filled'))
         )
+
+        print(self.visitor_logs_df.filter(F.col('VisitDateTime_normalized_na_filled').isNull()).count())
+
+    def _filter_visitor_logs(self):
+        """
+        Filter the logs according to the daterange passed
+        :return:
+        """
+        self.visitor_logs_df = self.visitor_logs_df \
+            .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled >= datetime.strptime(self.start_date, '%Y-%m-%d')) \
+            .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled < datetime.strptime(self.end_date, '%Y-%m-%d'))
 
     def _fill_null_activity(self):
         window = Window\
@@ -82,43 +95,31 @@ class MarketingModelETLPipeline:
             ).otherwise(F.col('Activity'))
         )
 
-    def _filter_visitor_logs(self):
-        """
-        Filter the logs according to the daterange passed
-        :return:
-        """
-        filtered_visitor_logs = self.visitor_logs_df\
-            .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled >= datetime.strptime(self.start_date, '%Y-%m-%d'))\
-            .filter(self.visitor_logs_df.VisitDateTime_normalized_na_filled < datetime.strptime(self.end_date, '%Y-%m-%d'))
-
-        return filtered_visitor_logs
-
     def _convert_to_lowercase(self):
-        self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn(
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'Activity_na_filled', F.lower(F.col('Activity_na_filled'))
         )
-        self.filtered_visitor_logs = self.filtered_visitor_logs.withColumn('OS', F.lower(F.col('OS')))
+        self.visitor_logs_df = self.visitor_logs_df.withColumn('OS', F.lower(F.col('OS')))
 
     def _preprocess(self):
         filtered_visitor_logs_path = os.path.join(self.output_dir, 'filtered_visitor_logs')
         if os.path.exists(filtered_visitor_logs_path):
             print(f'Reading from filtered_visitor_logs stored in {self.output_dir}')
-            self.filtered_visitor_logs = self.spark_session.read.parquet(filtered_visitor_logs_path)
+            self.visitor_logs_df = self.spark_session.read.parquet(filtered_visitor_logs_path)
         else:
             print('Preprocessing visitor logs')
             self._preprocess_visitor_logs()
             self._fill_null_visit_datetime()
+            self._filter_visitor_logs()
             self._fill_null_activity()
-            self.filtered_visitor_logs = self._filter_visitor_logs()
             self._convert_to_lowercase()
-            self.filtered_visitor_logs.write.parquet(filtered_visitor_logs_path)
+            self.visitor_logs_df.write.parquet(filtered_visitor_logs_path)
 
     def run(self):
         self._preprocess()
 
-        merged_df = self.user_df.join(self.filtered_visitor_logs, ['UserID'], how='left')
+        merged_df = self.user_df.join(self.visitor_logs_df, ['UserID'], how='left')
         merged_df = merged_df.withColumn('Signup Date', F.col('Signup Date').cast(TimestampType()))
-        merged_df = merged_df.sort('VisitDateTime_normalized_na_filled')
 
         # Compute No_of_days_Visited_7_Days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
