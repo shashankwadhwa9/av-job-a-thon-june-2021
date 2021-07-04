@@ -77,6 +77,20 @@ class MarketingModelETLPipeline:
             ).otherwise(F.col('Activity'))
         )
 
+    def _fill_null_product_id(self):
+        window = Window \
+            .partitionBy(self.visitor_logs_df.webClientID) \
+            .orderBy(self.visitor_logs_df.VisitDateTime_normalized_na_filled)
+
+        self.visitor_logs_df = self.visitor_logs_df.withColumn('lag_ProductID', F.lag('ProductID', 1).over(window))
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'ProductID_na_filled',
+            F.when(
+                F.col('ProductID').isNull(),
+                F.col('lag_ProductID')
+            ).otherwise(F.col('ProductID'))
+        )
+
     def _convert_to_lowercase(self):
         self.visitor_logs_df = self.visitor_logs_df.withColumn(
             'Activity_na_filled', F.lower(F.col('Activity_na_filled'))
@@ -94,6 +108,7 @@ class MarketingModelETLPipeline:
             self._fill_null_visit_datetime()
             self._filter_visitor_logs()
             self._fill_null_activity()
+            self._fill_null_product_id()
             self._convert_to_lowercase()
             self.visitor_logs_df.write.parquet(filtered_visitor_logs_path)
 
@@ -114,7 +129,7 @@ class MarketingModelETLPipeline:
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=15)
         df = merged_df.filter(merged_df.VisitDateTime_normalized_na_filled >= cutoff_date)
         df_total_products_viewed_15_Days = df.groupby('UserID').agg(
-            F.countDistinct('ProductID').alias('No_Of_Products_Viewed_15_Days')
+            F.countDistinct('ProductID_na_filled').alias('No_Of_Products_Viewed_15_Days')
         )
 
         # Compute User_Vintage
@@ -127,9 +142,9 @@ class MarketingModelETLPipeline:
         df = merged_df.filter(
             (merged_df.VisitDateTime_normalized_na_filled >= cutoff_date) &
             (merged_df.Activity_na_filled == 'pageload') &
-            (merged_df.ProductID.isNotNull())
+            (merged_df.ProductID_na_filled.isNotNull())
         )
-        df_products_viewed_15_Days = df.groupby(['UserID', 'ProductID']).agg(
+        df_products_viewed_15_Days = df.groupby(['UserID', 'ProductID_na_filled']).agg(
             F.count('Activity_na_filled').alias('cnt'),
             F.max('VisitDateTime_normalized_na_filled').alias('most_recent_visit'),
         )
@@ -139,8 +154,8 @@ class MarketingModelETLPipeline:
         df_products_viewed_15_Days = df_products_viewed_15_Days.withColumn('row_number', F.row_number().over(window))
         df_most_viewed_product_15_days = df_products_viewed_15_Days\
             .filter(F.col('row_number') == 1)\
-            .select('UserID', 'ProductID')\
-            .withColumnRenamed('ProductID', 'Most_Viewed_product_15_Days')
+            .select('UserID', 'ProductID_na_filled')\
+            .withColumnRenamed('ProductID_na_filled', 'Most_Viewed_product_15_Days')
 
         # Compute Most_Active_OS
         grouped = merged_df.groupBy('UserID', 'OS').count()
@@ -154,17 +169,17 @@ class MarketingModelETLPipeline:
         # Compute Recently_Viewed_Product
         df = merged_df.filter(
             (merged_df.Activity_na_filled == 'pageload') &
-            (merged_df.ProductID.isNotNull())
+            (merged_df.ProductID_na_filled.isNotNull())
         )
-        df_products_viewed = df.groupby(['UserID', 'ProductID']).agg(
+        df_products_viewed = df.groupby(['UserID', 'ProductID_na_filled']).agg(
             F.max('VisitDateTime_normalized_na_filled').alias('most_recent_visit')
         )
         window = Window.partitionBy('UserID').orderBy(df_products_viewed.most_recent_visit.desc())
         df_products_viewed = df_products_viewed.withColumn('row_number', F.row_number().over(window))
         df_recently_viewed_product = df_products_viewed\
             .filter(F.col('row_number') == 1)\
-            .select('UserID', 'ProductID') \
-            .withColumnRenamed('ProductID', 'Recently_Viewed_Product')
+            .select('UserID', 'ProductID_na_filled') \
+            .withColumnRenamed('ProductID_na_filled', 'Recently_Viewed_Product')
 
         # Compute Pageloads_last_7_days
         cutoff_date = datetime.strptime(self.end_date, '%Y-%m-%d') - timedelta(days=7)
