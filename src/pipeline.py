@@ -54,6 +54,24 @@ class MarketingModelETLPipeline:
             ).otherwise(F.col('VisitDateTime_normalized'))
         )
 
+        # Take first of UserID
+        w = Window \
+            .partitionBy(self.visitor_logs_df.UserID) \
+            .orderBy(F.col('VisitDateTime_normalized_na_filled').asc_nulls_last())
+
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'first_UserID', F.first(
+                self.visitor_logs_df.VisitDateTime_normalized_na_filled, ignorenulls=True
+            ).over(w)
+        )
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'VisitDateTime_normalized_na_filled',
+            F.when(
+                F.col('VisitDateTime_normalized_na_filled').isNull(),
+                F.col('first_UserID')
+            ).otherwise(F.col('VisitDateTime_normalized_na_filled'))
+        )
+
     def _filter_visitor_logs(self):
         """
         Filter the logs according to the daterange passed
@@ -97,6 +115,49 @@ class MarketingModelETLPipeline:
         )
         self.visitor_logs_df = self.visitor_logs_df.withColumn('OS', F.lower(F.col('OS')))
 
+    def _fill_null_leftovers(self):
+        # Activity
+        grouped = self.visitor_logs_df\
+            .filter(F.col('Activity_na_filled').isNotNull())\
+            .groupBy('UserID', 'Activity_na_filled').count()
+
+        window = Window.partitionBy('UserID').orderBy(F.desc('count'))
+        df_most_frequent_activity = grouped \
+            .withColumn('row_number', F.row_number().over(window)) \
+            .where(F.col('row_number') == 1) \
+            .select('UserID', 'Activity_na_filled') \
+            .withColumnRenamed('Activity_na_filled', 'Most_Frequent_Activity')
+
+        self.visitor_logs_df = self.visitor_logs_df.join(df_most_frequent_activity, 'UserID', how='left')
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'Activity_na_filled',
+            F.when(
+                F.col('Activity_na_filled').isNull(),
+                F.col('Most_Frequent_Activity')
+            ).otherwise(F.col('Activity_na_filled'))
+        )
+
+        # ProductID
+        grouped = self.visitor_logs_df \
+            .filter(F.col('ProductID_na_filled').isNotNull()) \
+            .groupBy('UserID', 'ProductID_na_filled').count()
+
+        window = Window.partitionBy('UserID').orderBy(F.desc('count'))
+        df_most_frequent_product = grouped \
+            .withColumn('row_number', F.row_number().over(window)) \
+            .where(F.col('row_number') == 1) \
+            .select('UserID', 'ProductID_na_filled') \
+            .withColumnRenamed('ProductID_na_filled', 'Most_Frequent_Product')
+
+        self.visitor_logs_df = self.visitor_logs_df.join(df_most_frequent_product, 'UserID', how='left')
+        self.visitor_logs_df = self.visitor_logs_df.withColumn(
+            'ProductID_na_filled',
+            F.when(
+                F.col('ProductID_na_filled').isNull(),
+                F.col('Most_Frequent_Product')
+            ).otherwise(F.col('ProductID_na_filled'))
+        )
+
     def _preprocess(self):
         filtered_visitor_logs_path = os.path.join(self.output_dir, 'filtered_visitor_logs')
         if os.path.exists(filtered_visitor_logs_path):
@@ -110,6 +171,7 @@ class MarketingModelETLPipeline:
             self._fill_null_activity()
             self._fill_null_product_id()
             self._convert_to_lowercase()
+            self._fill_null_leftovers()
             self.visitor_logs_df.write.parquet(filtered_visitor_logs_path)
 
     def run(self):
